@@ -3,6 +3,6 @@ database:
  password: dart
  host: localhost
  port: 5432
- databaseName: schat_server
+ databaseName: schatdb
 
 port: 8888

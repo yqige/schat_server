@@ -1,68 +1,1 @@
-import '../model/user.dart';
-import '../schat_server.dart';
-
-class RegisterController extends ResourceController {
-  RegisterController(this.context, this.authServer);
-
-  final ManagedContext context;
-  final AuthServer authServer;
-
-  @Operation.post()
-  Future<Response> createUser(@Bind.body() User user) async {
-    // Check for required parameters before we spend time hashing
-    if (user.username == null || user.password == null) {
-      return Response.badRequest(
-          body: {"error": "username and password required."});
-    }
-
-    user
-      ..salt = AuthUtility.generateRandomSalt()
-      ..hashedPassword = authServer.hashPassword(user.password, user.salt);
-
-    final query = Query<User>(context)..values = user;
-
-    final u = await query.insert();
-    final token = await authServer.authenticate(
-        user.username,
-        user.password,
-        request.authorization.credentials.username,
-        request.authorization.credentials.password);
-
-    final response = AuthController.tokenResponse(token);
-    final newBody = u.asMap()..["authorization"] = response.body;
-    return response..body = newBody;
-  }
-
-  @override
-  Map<String, APIResponse> documentOperationResponses(
-    APIDocumentContext context, Operation operation) {
-    return {
-      "200": APIResponse.schema("User successfully registered.", context.schema.getObject("UserRegistration")),
-      "400": APIResponse.schema("Error response", APISchemaObject.freeForm())
-    };
-  }
-
-  @override
-  void documentComponents(APIDocumentContext context) {
-    super.documentComponents(context);
-
-    final userSchemaRef = context.schema.getObjectWithType(User);
-    final userRegistration = APISchemaObject.object({
-      "authorization": APISchemaObject.object({
-        "access_token": APISchemaObject.string(),
-        "token_type": APISchemaObject.string(),
-        "expires_in": APISchemaObject.integer(),
-        "refresh_token": APISchemaObject.string(),
-        "scope": APISchemaObject.string()
-      })
-    });
-
-    context.schema.register("UserRegistration", userRegistration);
-
-    context.defer(() {
-      final userSchema = context.document.components.resolve(userSchemaRef);
-      userRegistration.properties.addAll(userSchema.properties);
-    });
-  }
-
-}
+import 'dart:convert' as convert;import 'package:http/http.dart' as http;import 'package:schat_server/model/AccessToken.dart';import 'package:schat_server/model/Client.dart';import 'package:schat_server/server/auth_server.dart';import '../model/user.dart';import '../schat_server.dart';class RegisterController extends ResourceController {  RegisterController(this.context, this.authServer, this.bbAuthServer);  final String urlWx = "https://api.weixin.qq.com/sns/oauth2/access_token?appid=wxe5d48e88e3339efd&secret=f216edc5291a9428b171ae3d94d18ffd&code=:CODE&grant_type=authorization_code";  final ManagedContext context;  final BbAuthServer bbAuthServer;  final AuthServer authServer;  @Operation.post()  Future<Response> createUser(@Bind.body() User user) async {    // Check for required parameters before we spend time hashing    if (user.username == null || user.password == null) {      return Response.badRequest(          body: {"error": "username and password required."});    }    user      ..salt = AuthUtility.generateRandomSalt()      ..hashedPassword = authServer.hashPassword(user.password, user.salt);    final query = Query<User>(context)..values = user;    final u = await query.insert();    final token = await authServer.authenticate(        user.username,        user.password,        request.authorization.credentials.username,        request.authorization.credentials.password);    final response = AuthController.tokenResponse(token);    final newBody = u.asMap()..["authorization"] = response.body;    return response..body = newBody;  }  @Operation.get("code")  Future<Response> createUserByCode(@Bind.path("code") String code) async {    if (code == null) {      return Response.badRequest(          body: {"error": "code required."});    }    final response = await http.get(urlWx.replaceFirst(':CODE', code));    if (response.statusCode == 200) {      final jsonResponse = convert.jsonDecode(response.body);      final AccessToken accessToken = AccessToken(jsonResponse);      print("Number of books about http: $accessToken.");      final errCode = accessToken.errCode;      if(errCode != null){        //根据open ID查询是否已注册过        final queryClient = Query<Client>(context)..where((o) => o.openId).equalTo(accessToken.openid);        Client client = await queryClient.fetchOne();        if(client == null){          client = Client();          client            ..openId = accessToken.openid            ..nickName = '';          final query = Query<Client>(context)..values = client;          await query.insert();        }        return Response.ok(accessToken.openid);      }    } else {      print("Request failed with status: ${response.statusCode}.");    }    return Response.ok(null);  }  @override  Map<String, APIResponse> documentOperationResponses(    APIDocumentContext context, Operation operation) {    return {      "200": APIResponse.schema("User successfully registered.", context.schema.getObject("UserRegistration")),      "400": APIResponse.schema("Error response", APISchemaObject.freeForm())    };  }  @override  void documentComponents(APIDocumentContext context) {    super.documentComponents(context);    final userSchemaRef = context.schema.getObjectWithType(User);    final userRegistration = APISchemaObject.object({      "authorization": APISchemaObject.object({        "access_token": APISchemaObject.string(),        "token_type": APISchemaObject.string(),        "expires_in": APISchemaObject.integer(),        "refresh_token": APISchemaObject.string(),        "scope": APISchemaObject.string()      })    });    context.schema.register("UserRegistration", userRegistration);    context.defer(() {      final userSchema = context.document.components.resolve(userSchemaRef);      userRegistration.properties.addAll(userSchema.properties);    });  }}
